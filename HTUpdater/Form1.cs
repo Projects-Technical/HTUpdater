@@ -40,54 +40,40 @@ namespace HTUpdater
 
         }
 
-        private void getManifest(string solutionName)
+        private void getManifest(string solutionName, string solutionpath)
         {
-            WebClient wc = new WebClient();
-
-            string manifest = wc.DownloadString("http://dev.htapplications.com/Updater/BlazeMusic/Manifest.xml");
-
-
-
-            XmlReader xreader = XmlReader.Create(new StringReader(manifest));
-
-            string nodename = "";
-            string nodeid = "";
-            xreader.MoveToContent();
-            while (xreader.Read())
+            try
             {
-                try
+                WebClient wc = new WebClient();
+
+                string manifest = wc.DownloadString("http://dev.htapplications.com/Updater/" + solutionName + "/Manifest.xml");
+
+                Applications aps = new Applications();
+
+                XmlReaderSettings xrs = new XmlReaderSettings();
+                XmlReader xr = XmlReader.Create(new StringReader(manifest), xrs);
+                xr.MoveToContent();
+                while (xr.Read())
                 {
-
-                    if (xreader.HasAttributes)
+                    if (xr.NodeType == XmlNodeType.Element)
                     {
-                        xreader.MoveToNextAttribute();
-                        nodeid = xreader.GetAttribute(0);
-
-                    }
-                    if (xreader.NodeType == XmlNodeType.Element)
-                    {
-                        nodename = xreader.Name;
-                    }
-
-                    if (xreader.NodeType == XmlNodeType.Text)
-                    {
-
-                        switch (nodename.ToLower())
+                        switch (xr.Name.ToLower())
                         {
-                            case "version":
-
-
-                                dlversion = Convert.ToInt32(xreader.ReadInnerXml());
-                                listBox1.Items.Add("Version:" + dlversion);
-
-                                break;
-                            case "file":
-                                listBox1.Items.Add("File:" + xreader.ReadInnerXml());
-                                if (runtimeversion < dlversion)
+                                case "solution":
+                                string path = "";
+                                int version = 0;
+                                if (xr.HasAttributes == true)
                                 {
-                                    wc.DownloadFile(xreader.ReadInnerXml(), nodeid);
-
+                                    path = xr.GetAttribute(0);
+                                    version = Convert.ToInt32(xr.GetAttribute(1));
                                 }
+
+                                DateTime modified = new DateTime();
+
+                                WebRequest wr = WebRequest.Create("http//www.google.com");
+                                
+
+                                aps.Add_Package(version,xr.ReadInnerXml(),path,)
                                 break;
 
 
@@ -95,17 +81,89 @@ namespace HTUpdater
                         }
 
                     }
-
-                    File.WriteAllText(Application.StartupPath + "\\version.cfg", dlversion.ToString());
                 }
-                catch (Exception ex)
-                {
 
-                }
+
+
+                xr.Close();
+                xr.Dispose();
+
             }
+            catch(Exception ex)
+            {
 
+            }
         }
         
+        public class Applications
+        {
+            public List<Package> Packages = new List<Package>();
+            
+            public Applications()
+
+            {
+                Packages = new List<Package>();
+
+            }
+
+            public void Add_Package(int version, string Name, string Path, DateTime Modified)
+            {
+                Packages.Add(new Package(version,Name,Path,Modified));
+                
+            }
+
+
+        }
+        public class Package
+        {
+            public static int Version;
+            public List<Application_File> Manifest = new List<Application_File>();
+
+            public Package()
+            {
+                Version = 0;
+                Manifest = new List<Application_File>();
+            }
+
+            public Package(int version, string name, string path, DateTime Modified)
+            {
+                Version = version;
+                Manifest.Add(new Application_File(name, path, Modified));
+            }
+
+            public void Set_Version(int version)
+                
+            {
+                Version = version;
+            }
+
+
+            public void Add_Entry(string Name, string Path, DateTime Modified)
+            {
+                Manifest.Add(new Application_File(Name, Path, Modified));
+            }
+        }
+        public class Application_File
+        {
+            string Name;
+            string Path;
+            DateTime Modified;
+
+            public Application_File Get_File()
+            {
+                Application_File af = new Application_File(Name,Path,Modified);
+
+                return af;
+                
+            }
+
+            public Application_File(string name, string path, DateTime modified)
+            {
+                Name = name;
+                Path = path;
+                Modified = modified;
+            }
+        }
       
         public class config
         {
@@ -183,9 +241,13 @@ namespace HTUpdater
                 
                 xr.Close();
                 xr.Dispose();
-                foreach(ConfigInfo ci2 in ci.Config_Entries())
+                foreach(var(value,index) in ci.Config_Entries().Select((v,i)=>(v,i)))
                 {
-                    MessageBox.Show(ci2.SolutionName[0] + " - " + ci2.SolutionPath[0]);
+                    if(!Directory.Exists(value.SolutionPath[index]))
+                    {
+                        Directory.CreateDirectory(value.SolutionPath[index]);
+
+                    }
                 }
             }
 
@@ -218,9 +280,10 @@ namespace HTUpdater
                 public IEnumerable<ConfigInfo> Config_Entries()
                 {
                     int i = 0;
+                    ConfigInfo ci = new ConfigInfo();
                     for(i = 0;i<SolutionName.Count;i++)
                     {
-                        ConfigInfo ci = new ConfigInfo(SolutionName[i], SolutionPath[i]);
+                        ci.Add_Entry(SolutionName[i], SolutionPath[i]);
 
                         yield return ci;
                     }
