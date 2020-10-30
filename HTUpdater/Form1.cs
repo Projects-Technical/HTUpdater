@@ -9,16 +9,22 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Windows.Forms.VisualStyles;
 using System.Xml;
 using Microsoft.VisualBasic;
 
 
 namespace HTUpdater
 {
+    
     public partial class Form1 : Form
     {
+
+        static DownloadList dllist = new DownloadList();
+        static DownloadList deleteList = new DownloadList();
         public Form1()
         {
             InitializeComponent();
@@ -29,9 +35,15 @@ namespace HTUpdater
 
 
         Boolean update = false;
+        private static Label FileLabel;
+        private static Label ProgressLabel;
+        private static ProgressBar DownloadProgress;
         private void Form1_Load(object sender, EventArgs e)
         {
-
+            this.BringToFront();
+            FileLabel = lblFilename;
+            ProgressLabel = lblprogress;
+            DownloadProgress = pbdownload;
             config nc = new config();
 
             nc.Read_Config();
@@ -39,16 +51,23 @@ namespace HTUpdater
 
 
         }
-
-        private void getManifest(string solutionName, string solutionpath)
+        static string baseaddr = "http://dev.htapplications.com/Updater/";
+        static List<Application_File> aps = new List<Application_File>();
+      
+        
+        public static void getManifest(string solutionName, string solutionpath)
         {
+           
+
+
+            FileLabel.Text = "Checking Solution " + solutionName;
             try
             {
                 WebClient wc = new WebClient();
 
-                string manifest = wc.DownloadString("http://dev.htapplications.com/Updater/" + solutionName + "/Manifest.xml");
+                string manifest = wc.DownloadString(baseaddr + solutionName + "/Manifest.xml");
 
-                Applications aps = new Applications();
+                aps = new List<Application_File>();
 
                 XmlReaderSettings xrs = new XmlReaderSettings();
                 XmlReader xr = XmlReader.Create(new StringReader(manifest), xrs);
@@ -59,21 +78,48 @@ namespace HTUpdater
                     {
                         switch (xr.Name.ToLower())
                         {
-                                case "solution":
+                                case "file":
                                 string path = "";
                                 int version = 0;
+                                int active = 0;
                                 if (xr.HasAttributes == true)
                                 {
-                                    path = xr.GetAttribute(0);
-                                    version = Convert.ToInt32(xr.GetAttribute(1));
+                                    switch (xr.AttributeCount)
+                                    {
+                                        case 1:
+                                            active = Convert.ToInt32(xr.GetAttribute("Active"));
+                                        break;
+                                        case 2:
+                                            version = Convert.ToInt32(xr.GetAttribute("Version"));
+                                            active = Convert.ToInt32(xr.GetAttribute("Active"));
+                                       break;
+                                    }
+
+
+                                    
                                 }
 
                                 DateTime modified = new DateTime();
+                                string localfile = xr.ReadInnerXml();
+                                string nuri = new Uri(baseaddr + solutionName + "/Package/" + localfile).AbsoluteUri;
 
-                                WebRequest wr = WebRequest.Create("http//www.google.com");
+                                
+                                HttpWebRequest wr = (HttpWebRequest) HttpWebRequest.Create(nuri);
+                                HttpWebResponse wresp = (HttpWebResponse) wr.GetResponse();
+                                modified = wresp.LastModified;
+                                long length = wresp.ContentLength;
+
                                 
 
-                                aps.Add_Package(version,xr.ReadInnerXml(),path,)
+                                FileLabel.Text = "Checking File " + localfile + " in Package " + solutionName;
+                                if (active == 1)
+                                {
+                                    aps.Add(new Application_File(solutionName, solutionpath, localfile, modified, length));
+                                }
+                                else
+                                {
+                                    deleteList.Add("", solutionpath + "\\" + localfile);
+                                }
                                 break;
 
 
@@ -88,80 +134,127 @@ namespace HTUpdater
                 xr.Close();
                 xr.Dispose();
 
+                foreach(var(value,index) in aps.Select((v,i)=>(v,i)))
+                {
+                    
+                    string name = value.Name;
+                    string path = value.Path;
+                    string filename = value.LocalPath;
+                    DateTime modified = value.Modified;
+
+                    if (!Directory.Exists(Path.GetDirectoryName(path + "\\" + filename)))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(path + "\\" + filename));
+
+                    }
+                    long filesize = -200;
+                    try
+                    {
+                       filesize = new FileInfo(path + "\\" + filename).Length;
+                    }catch(Exception ex)
+                    {
+
+                    }
+
+                    if (!File.Exists(path + "\\" + filename) || File.GetLastWriteTimeUtc(path + "\\" + filename) < modified.ToUniversalTime() || filesize != value.FileSize)
+                    {
+                       
+                        string dllink = baseaddr + name + "/Package/" + filename;
+
+                        dllist.Add(dllink, path + "\\" + filename);
+                       
+
+
+                    }
+
+                    if(dllist.DownList.Count == 0)
+                    {
+                        Form1.ActiveForm.Show();
+                        
+                        FileLabel.Text = "All Files Up to Date";
+                        Form1.ActiveForm.Update();
+                        System.Windows.Forms.Timer ntimer = new System.Windows.Forms.Timer();
+                        ntimer.Interval = 5000;
+                        ntimer.Enabled = true;
+                        ntimer.Tick += closeapp;
+
+                    }
+                }
+
+                foreach(DownloadFile f in deleteList.DownList)
+                {
+                    if(File.Exists(f.Dir))
+                    {
+                        File.Delete(f.Dir);
+                        if(Directory.GetFiles(Path.GetDirectoryName(f.Dir)).Length == 0)
+                        {
+                            Directory.Delete(Path.GetDirectoryName(f.Dir));
+                        }
+                    }
+                }
+
             }
             catch(Exception ex)
             {
-
+                MessageBox.Show("Couldnt Connect to Server");
             }
         }
-        
-        public class Applications
+
+        private static void closeapp(object sender, EventArgs args)
         {
-            public List<Package> Packages = new List<Package>();
-            
-            public Applications()
-
-            {
-                Packages = new List<Package>();
-
-            }
-
-            public void Add_Package(int version, string Name, string Path, DateTime Modified)
-            {
-                Packages.Add(new Package(version,Name,Path,Modified));
-                
-            }
-
-
+            Application.Exit();
         }
-        public class Package
+        public class DownloadList
         {
-            public static int Version;
-            public List<Application_File> Manifest = new List<Application_File>();
+            public List<DownloadFile> DownList { get; set; }
 
-            public Package()
+
+            public DownloadList()
             {
-                Version = 0;
-                Manifest = new List<Application_File>();
+                DownList = new List<DownloadFile>();
             }
 
-            public Package(int version, string name, string path, DateTime Modified)
+            public void Add(string url, string dir)
             {
-                Version = version;
-                Manifest.Add(new Application_File(name, path, Modified));
-            }
-
-            public void Set_Version(int version)
-                
-            {
-                Version = version;
-            }
-
-
-            public void Add_Entry(string Name, string Path, DateTime Modified)
-            {
-                Manifest.Add(new Application_File(Name, Path, Modified));
+                DownList.Add(new DownloadFile(url, dir));
             }
         }
+
+        public class DownloadFile
+        {
+            public string URL { get; set; }
+            public string Dir { get; set; }
+
+            public DownloadFile(string url, string dir)
+            {
+                URL = url;
+                Dir = dir;
+            }
+        }
+  
         public class Application_File
         {
-            string Name;
-            string Path;
-            DateTime Modified;
+            public string Name { get; set; }
+            public string Path { get; set; }
+            public string LocalPath { get; set; }
+            public DateTime Modified { get; set; }
+            public long FileSize { get; set; }
 
             public Application_File Get_File()
             {
-                Application_File af = new Application_File(Name,Path,Modified);
+                Application_File af = new Application_File(Name,Path,LocalPath,Modified,FileSize);
 
                 return af;
                 
             }
 
-            public Application_File(string name, string path, DateTime modified)
+            public Application_File(string name, string path,string localpath, DateTime modified, long filesize)
             {
                 Name = name;
                 Path = path;
                 Modified = modified;
+                LocalPath = localpath;
+                FileSize = filesize;
             }
         }
       
@@ -187,18 +280,11 @@ namespace HTUpdater
             {
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-                sb.AppendLine("<Config>");
+                sb.AppendLine("<Updater>");
                 sb.AppendLine("<Version>" + Version + "</Version>");
-                sb.AppendLine("<Product>" + "</Product>");
+                sb.AppendLine("<Solution Name=\"Updater\">" + "C:\\Updater\\" + "</Solution>");
 
-                int incrementer = 0;
-                foreach (ConfigInfo cfg in ci.Config_Entries())
-                {
-                    sb.AppendLine("<Application Name=\"" + cfg.SolutionName + "\">" + cfg.SolutionPath + "</Application>"); ;
-                    incrementer++;
-                    
-                }
-                sb.AppendLine("</Config>");
+                sb.AppendLine("</Updater>");
 
                 File.WriteAllText(Config_File, sb.ToString());
             }
@@ -208,6 +294,14 @@ namespace HTUpdater
             public void Read_Config()
             {
                 XmlReaderSettings xrs = new XmlReaderSettings();
+                if(!Directory.Exists(Path.GetDirectoryName(configloc)))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(configloc));
+                }
+                if (!File.Exists(configloc))
+                {
+                    Write_Config();
+                }
                 XmlReader xr = XmlReader.Create(File.OpenRead(configloc), xrs);
                 xr.MoveToContent();
                 while (xr.Read())
@@ -246,6 +340,16 @@ namespace HTUpdater
                     if(!Directory.Exists(value.SolutionPath[index]))
                     {
                         Directory.CreateDirectory(value.SolutionPath[index]);
+
+                    }
+                   
+                    Form1.getManifest(value.SolutionName[index], value.SolutionPath[index]);
+                    if(dllist.DownList.Count > 0)
+                    {
+                       
+                        Thread ntrd = new Thread(Downloader);
+                        ntrd.IsBackground = true;
+                        ntrd.Start();
 
                     }
                 }
@@ -308,6 +412,50 @@ namespace HTUpdater
             private void loadcfg()
             {
 
+            }
+        }
+
+        static void Downloader()
+        {
+            try
+            {
+                foreach (var (value, index) in dllist.DownList.Select((v, i) => (v, i)))
+                {
+                    WebClient webClient = new WebClient();
+                    webClient.DownloadProgressChanged += new DownloadProgressChangedEventHandler(DLProg);
+                    webClient.DownloadFileCompleted += HandleDownloadComplete;
+                    FileLabel.Invoke(new Action(()=> FileLabel.Text = "Downloading File: " + (index + 1) + "/" + dllist.DownList.Count()));
+
+                    var syncObject = new Object();
+                    lock (syncObject)
+                    {
+                        webClient.DownloadFileAsync(new Uri(value.URL) , value.Dir, syncObject);
+                        //This would block the thread until download completes
+                        Monitor.Wait(syncObject);
+                    }
+                }
+            }catch(Exception ex)
+            {
+                MessageBox.Show(ex.ToString());
+            }
+
+            FileLabel.Invoke(new Action(() => FileLabel.Text = "Downloading Completed"));
+            Thread.Sleep(5000);
+            Application.Exit();
+        }
+
+        static void DLProg(object sender, DownloadProgressChangedEventArgs e)
+        {
+            DownloadProgress.Invoke(new Action(()=> DownloadProgress.Value = e.ProgressPercentage));
+            ProgressLabel.Text = (e.BytesReceived / 1024 / 1024) + "MB /" + (e.TotalBytesToReceive / 1024 / 1024) + "MB";
+        }
+
+        static void HandleDownloadComplete(object sender, AsyncCompletedEventArgs e)
+        {
+            lock (e.UserState)
+            {
+                //releases blocked thread
+                Monitor.Pulse(e.UserState);
             }
         }
     }
